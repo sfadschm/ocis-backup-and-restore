@@ -1,4 +1,4 @@
-# oCIS Backp and Restore
+# oCIS Backup and Restore
 
 ## What?
 
