@@ -1,0 +1,90 @@
+#!/bin/bash
+
+# parameters
+SERVER=XXX.XXX.XXX.XXX
+TGT_DIR=/volumeXXX/XXXshared_folderXXX/ocis
+REM_CONT_DIR=/XXXvarXXX/XXXocisXXX
+REM_VOL_DIR=/var/lib/docker/volumes
+
+# derived parameters
+FULLDIR="${TGT_DIR}/full"
+INCREMENTDIR="${TGT_DIR}/increments"
+
+# remote directories
+CERTDIR="${REM_VOL_DIR}/ocis_certs"
+CONFIGDIR="${REM_VOL_DIR}/ocis_ocis-config"
+DATADIR="${REM_VOL_DIR}/ocis_ocis-data"
+
+# cleanup terminal
+clear
+
+# stop container
+echo -e "Stopping container ..."
+ssh -l root $SERVER "cd ${REM_CONT_DIR}; docker compose stop"
+
+# run backups
+for SRCDIR in $REM_CONT_DIR $CERTDIR $CONFIGDIR $DATADIR; do
+  # generate local backup-folder name
+  LOCALDIR=$SRCDIR
+  LOCALDIR=${LOCALDIR/"$REM_VOL_DIR"/}
+  LOCALDIR=${LOCALDIR/"ocis_"/}
+  LOCALDIR=${LOCALDIR/"/var/"/}
+  LOCALDIR=${LOCALDIR/"/"/}
+  echo -e "\nBacking up '${LOCALDIR}' ..."
+
+  # generate logfile name
+  echo -e "  Generating log name ..."
+  LOGNAME="_synced-on-"
+  LOGDATE=$(date +%Y%m%d)
+  LOGFILE="${FULLDIR}/${LOCALDIR}${LOGNAME}${LOGDATE}.log"
+
+  # get date of last sync
+  echo -e "  Reading last sync date ..."
+  OLDLOGFILE=$(find $FULLDIR -maxdepth 1 -type f -iname "${LOCALDIR}${LOGNAME}*.log")
+  if [ ! -f "$OLDLOGFILE" ]; then
+    LASTSYNCED="initial"
+  else
+    LASTSYNCED=$(basename "$OLDLOGFILE")
+    LASTSYNCED=${LASTSYNCED/".log"/}
+    LASTSYNCED=${LASTSYNCED/"${LOCALDIR}${LOGNAME}"/}
+  fi
+
+  # set target for increments
+  TGTDIR="${FULLDIR}/${LOCALDIR}"
+  INCDIR="${INCREMENTDIR}/${LASTSYNCED}/${LOCALDIR}"
+
+  # create log file
+  touch "$LOGFILE"
+
+  # create increment target
+  mkdir -p "${INCDIR}"
+
+  # move old log file to increment
+  if [ -f "$OLDLOGFILE" ]; then
+    mv "$OLDLOGFILE" "${INCDIR}"
+  fi
+
+  # define sync options
+  SRCPATH="root@${SERVER}:${SRCDIR}"
+  SOURCES="${SRCPATH}/"
+
+  # prepare sync options
+  echo -e "  Running backup ..."
+  SYNCOPTS="--force --ignore-errors --human-readable --info=progress2 --delete
+            --backup --backup-dir=${INCDIR} --log-file=${LOGFILE} -aX"
+
+  # run the backup
+  SYNCRES=$(rsync $SYNCOPTS $SOURCES $TGTDIR)
+  echo -e "${SYNCRES##*$'\r'}"
+
+  echo -e "Backup of '${LOCALDIR}' finished."
+done
+
+
+# restart container
+echo -e "\nStarting up container ..."
+ssh -l root $SERVER "cd ${REM_CONT_DIR}; docker compose start"
+
+
+# user information
+echo -e "\nBackup finished."

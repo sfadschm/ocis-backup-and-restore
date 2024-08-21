@@ -1,0 +1,86 @@
+#!/bin/bash
+
+# capture flags
+PULL_DATA="false"
+PULL_BINARY="false"
+while getopts 'bp' flag; do
+  case "${flag}" in
+    b) PULL_BINARY="true" ;;
+    p) PULL_DATA="true" ;;
+  esac
+done
+
+
+# parameters
+SRC_SERVER=XXX.XXX.XXX.XXX
+REM_BASE_DIR="/XXX/XXX" # e.g., /volume1/ownCloud/ocis/full
+LOC_BASE_DIR="/XXX/XXX" # e.g., /mnt/d/ocis_restore
+
+
+# local directories
+LOC_CONTAINER="${LOC_BASE_DIR}/ocis-docker"
+LOC_CONFIG="${LOC_BASE_DIR}/ocis-config"
+LOC_DATA="${LOC_BASE_DIR}/ocis-data"
+
+
+# create LOC_BASE_DIR
+clear
+echo -e "Starting restoration ..."
+mkdir -p $LOC_BASE_DIR && cd $LOC_BASE_DIR
+
+
+# pull data if flag is set
+if [ "${PULL_DATA}" = "true" ]; then
+  # connection
+  SYNCOPTS=(
+    azhX
+    -e "ssh -p 22 -l root"
+    --info=progress2
+  )
+
+  # remote directories
+  REM_CONTAINER="${REM_BASE_DIR}/ocis"
+  REM_CONFIG="${REM_BASE_DIR}/ocis-config/_data"
+  REM_DATA="${REM_BASE_DIR}/ocis-data/_data"
+
+  # clear LOC_BASE_DIR
+  rm -rf ${LOC_BASE_DIR}/*
+
+  # rsync REM_CONTAINER into LOC_BASE_DIR
+  echo -e "\nPulling '${LOC_CONTAINER}' ..."
+  rsync "${SYNCOPTS[@]}" "${SRC_SERVER}:${REM_CONTAINER}/" "${LOC_CONTAINER}"
+
+  # rsync REM_CONFIG into LOC_BASE_DIR
+  echo -e "\nPulling '${LOC_CONFIG}' ..."
+  rsync "${SYNCOPTS[@]}" "${SRC_SERVER}:${REM_CONFIG}/" "${LOC_CONFIG}"
+
+  # rsync REM_DATA into LOC_BASE_DIR
+  echo -e "\nPulling '${LOC_DATA}' ..."
+  rsync "${SYNCOPTS[@]}" "${SRC_SERVER}:${REM_DATA}/" "${LOC_DATA}"
+fi
+
+
+# pull oCIS binary if flag is set
+if [ "${PULL_BINARY}" = "true" ]; then
+  # read ocis version from environment
+  OCIS_VERSION=$(grep -Eo -m1 '[0-9]\.[0-9]\.[0-9]+' "${LOC_CONTAINER}/.env")
+
+  # pull ocis executable into LOCALBASE
+  echo -e "\nPulling oCIS ${OCIS_VERSION} binary ..."
+    wget -q --show-progress -O "${LOC_BASE_DIR}/ocis" "https://download.owncloud.com/ocis/ocis/stable/${OCIS_VERSION}/ocis-${OCIS_VERSION}-linux-amd64"
+  chmod +x ocis
+fi
+
+
+# open web UI with delay
+(sleep 10; sensible-browser https://localhost:9200) &
+
+# boot up ocis
+echo -e "\nStarting server ..."
+echo -e "Press'Ctrl+C' to stop.\n"
+export OCIS_INSECURE=true
+export OCIS_LOG_LEVEL=ERROR
+export OCIS_LOG_FILE="${LOC_BASE_DIR}/ocis.log"
+export OCIS_CONFIG_DIR=${LOC_CONFIG}
+export OCIS_BASE_DATA_PATH=${LOC_DATA}
+./ocis server
